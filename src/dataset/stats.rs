@@ -47,33 +47,53 @@ pub fn report(records: &[DatasetRecord]) -> String {
     }
 
     let count = records.len();
-    let _ = writeln!(output, "samples total: {count}");
-    let _ = writeln!(output, "exact duplicates: {duplicates}");
+    output.push_str(
+        "Dataset summary\n\
+         ---------------\n\
+         Metric                |      Value\n\
+         ----------------------+-----------\n",
+    );
+    let _ = writeln!(output, "Samples               | {count:>10}");
+    let _ = writeln!(output, "Exact duplicates      | {duplicates:>10}");
     let _ = writeln!(
         output,
-        "snippet bytes: min={} mean={:.1} max={}",
+        "Snippet bytes minimum | {:>10}",
         if count == 0 { 0 } else { min_bytes },
-        total_bytes as f64 / count.max(1) as f64,
-        max_bytes
     );
     let _ = writeln!(
         output,
-        "mean lines/sample: {:.2}",
+        "Snippet bytes mean    | {:>10.1}",
+        total_bytes as f64 / count.max(1) as f64,
+    );
+    let _ = writeln!(output, "Snippet bytes maximum | {max_bytes:>10}");
+    let _ = writeln!(
+        output,
+        "Mean lines per sample  | {:>10.2}",
         total_lines as f64 / count.max(1) as f64
+    );
+
+    output.push_str(
+        "\nLanguage breakdown\n\
+         ------------------\n\
+         Language | Samples | Repositories | Files\n\
+         ---------+---------+--------------+------\n",
     );
     for language in Language::ALL {
         let _ = writeln!(
             output,
-            "{language:<6} samples={:<7} repositories={:<5} files={}",
+            "{:<8} | {:>7} | {:>12} | {:>5}",
+            language.name(),
             samples.get(&language).copied().unwrap_or_default(),
             repositories.get(&language).map_or(0, BTreeSet::len),
             files.get(&language).map_or(0, BTreeSet::len),
         );
     }
 
-    output.push_str("\ntop repository contributions:\n");
+    output.push_str("\nTop repository contributions\n----------------------------\n");
     for language in Language::ALL {
-        let _ = writeln!(output, "{language}:");
+        let _ = writeln!(output, "\n{language}");
+        output.push_str("Repository                               | Samples\n");
+        output.push_str("-----------------------------------------+--------\n");
         let mut ranked: Vec<_> = contributions
             .get(&language)
             .into_iter()
@@ -81,7 +101,7 @@ pub fn report(records: &[DatasetRecord]) -> String {
             .collect();
         ranked.sort_by_key(|(repository, count)| (std::cmp::Reverse(**count), *repository));
         for (repository, count) in ranked.into_iter().take(5) {
-            let _ = writeln!(output, "  {repository:<40} {count}");
+            let _ = writeln!(output, "{repository:<40} | {count:>7}");
         }
     }
     output

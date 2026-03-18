@@ -165,14 +165,23 @@ fn run_gradcheck(arguments: cli::GradcheckArgs) -> Result<()> {
         absolute_tolerance: arguments.absolute_tolerance,
         relative_tolerance: arguments.relative_tolerance,
     });
+    println!("Gradient check");
+    println!("--------------");
+    println!("Checked parameters  | {:>12}", report.entries.len());
+    println!("Max absolute error  | {:>12.6e}", report.max_absolute_error);
     println!(
-        "checked={} max_absolute_error={:.6e} mean_absolute_error={:.6e} \
-         max_relative_error={:.6e} outside_tolerance={}",
-        report.entries.len(),
-        report.max_absolute_error,
-        report.mean_absolute_error,
-        report.max_relative_error,
-        report.outside_tolerance,
+        "Mean absolute error | {:>12.6e}",
+        report.mean_absolute_error
+    );
+    println!("Max relative error  | {:>12.6e}", report.max_relative_error);
+    println!("Outside tolerance   | {:>12}", report.outside_tolerance);
+    println!(
+        "Result              | {:>12}",
+        if report.outside_tolerance == 0 {
+            "PASS"
+        } else {
+            "FAIL"
+        }
     );
     if report.outside_tolerance > 0 {
         bail!("gradient check failed");
@@ -255,12 +264,7 @@ fn run_train(arguments: cli::TrainArgs) -> Result<()> {
     if let Some(test_path) = arguments.test {
         let test = prepare(&load_jsonl(&test_path)?);
         let metrics = evaluate(&checkpoint.network, &test);
-        println!(
-            "test loss={:.4} accuracy={:.4}\n{}",
-            metrics.loss(),
-            metrics.accuracy(),
-            metrics.confusion_matrix()
-        );
+        print_evaluation("Test evaluation", &metrics);
     }
     Ok(())
 }
@@ -269,13 +273,7 @@ fn run_eval(arguments: cli::EvalArgs) -> Result<()> {
     let checkpoint = Checkpoint::load(&arguments.model)?;
     let records = load_jsonl(&arguments.dataset)?;
     let metrics = evaluate(&checkpoint.network, &prepare(&records));
-    println!(
-        "samples={} loss={:.4} accuracy={:.4}\n{}",
-        metrics.samples,
-        metrics.loss(),
-        metrics.accuracy(),
-        metrics.confusion_matrix()
-    );
+    print_evaluation("Evaluation", &metrics);
     Ok(())
 }
 
@@ -287,20 +285,49 @@ fn run_prediction(arguments: &PredictArgs, inspect: bool) -> Result<()> {
     if inspect {
         print_inspection(&arguments.snippet, &features, &cache);
     } else {
+        println!("Prediction");
+        println!("----------");
         print_probabilities(&cache.probabilities);
     }
-    println!("\nprediction: {}", predicted_language(&cache.probabilities));
+    print_prediction_result(&cache.probabilities);
     Ok(())
 }
 
 fn print_probabilities(probabilities: &[f32; Language::COUNT]) {
+    println!("Language | Probability");
+    println!("---------+------------");
     for language in Language::ALL {
         println!(
-            "{:<6} {:.3}",
+            "{:<8} | {:>10.2}%",
             language.name(),
-            probabilities[language as usize]
+            probabilities[language as usize] * 100.0
         );
     }
+}
+
+fn print_prediction_result(probabilities: &[f32; Language::COUNT]) {
+    let prediction = predicted_language(probabilities);
+    println!("\nResult");
+    println!("------");
+    println!("Language   | {prediction}");
+    println!(
+        "Confidence | {:.2}%",
+        probabilities[prediction as usize] * 100.0
+    );
+}
+
+fn print_evaluation(title: &str, metrics: &code_classifier::metrics::ClassificationMetrics) {
+    println!("{title}");
+    println!("{}", "-".repeat(title.len()));
+    println!("Samples  | {}", metrics.samples);
+    println!("Loss     | {:.4}", metrics.loss());
+    println!(
+        "Accuracy | {:.2}% ({}/{})",
+        metrics.accuracy() * 100.0,
+        metrics.correct,
+        metrics.samples
+    );
+    println!("\n{}", metrics.confusion_matrix());
 }
 
 fn print_inspection(
@@ -313,31 +340,67 @@ fn print_inspection(
         .enumerate()
         .filter(|(_, value)| **value != 0.0)
         .collect();
-    println!("input snippet:\n{snippet}\n");
-    println!("non-zero input features: {}", nonzero.len());
-    println!("feature statistics: {:?}", Stats::from_slice(features));
-    println!("layer 1 pre-activation: {:?}", Stats::from_slice(&cache.z1));
-    println!(
-        "layer 1 ReLU active: {}/{}",
-        cache.a1.iter().filter(|value| **value > 0.0).count(),
-        cache.a1.len()
+    println!("Network inspection");
+    println!("------------------");
+    println!("\nSnippet");
+    println!("-------");
+    println!("{snippet}");
+
+    println!("\nInput features");
+    println!("--------------");
+    println!("Nonzero buckets | {}", nonzero.len());
+    println!("Total buckets   | {FEATURE_COUNT}");
+
+    println!("\nActivation statistics");
+    println!("---------------------");
+    println!("Layer   |       Min |       Max |      Mean |   L2 norm | ReLU active");
+    println!("--------+-----------+-----------+-----------+-----------+------------");
+    print_stats_row("Input", Stats::from_slice(features), None);
+    print_stats_row(
+        "Layer 1",
+        Stats::from_slice(&cache.z1),
+        Some((
+            cache.a1.iter().filter(|value| **value > 0.0).count(),
+            cache.a1.len(),
+        )),
     );
-    println!("layer 2 pre-activation: {:?}", Stats::from_slice(&cache.z2));
-    println!(
-        "layer 2 ReLU active: {}/{}",
-        cache.a2.iter().filter(|value| **value > 0.0).count(),
-        cache.a2.len()
+    print_stats_row(
+        "Layer 2",
+        Stats::from_slice(&cache.z2),
+        Some((
+            cache.a2.iter().filter(|value| **value > 0.0).count(),
+            cache.a2.len(),
+        )),
     );
-    println!("raw logits:");
+
+    println!("\nOutputs");
+    println!("-------");
+    println!("Language |      Logit | Probability");
+    println!("---------+------------+------------");
     for language in Language::ALL {
         println!(
-            "  {:<6} {:+.5}",
+            "{:<8} | {:+10.5} | {:>10.2}%",
             language.name(),
-            cache.logits[language as usize]
+            cache.logits[language as usize],
+            cache.probabilities[language as usize] * 100.0
         );
     }
-    println!("probabilities:");
-    print_probabilities(&cache.probabilities);
 
     trace!(snippet, feature_buckets = ?nonzero, z1 = ?cache.z1, a1 = ?cache.a1, z2 = ?cache.z2, a2 = ?cache.a2, logits = ?cache.logits, probabilities = ?cache.probabilities, "inspection details");
+}
+
+fn print_stats_row(name: &str, stats: Stats, active: Option<(usize, usize)>) {
+    let active = active.map_or_else(
+        || "-".to_owned(),
+        |(count, total)| {
+            format!(
+                "{count}/{total} ({:.1}%)",
+                count as f32 / total as f32 * 100.0
+            )
+        },
+    );
+    println!(
+        "{name:<7} | {:+9.4} | {:+9.4} | {:+9.4} | {:>9.4} | {active:>11}",
+        stats.min, stats.max, stats.mean, stats.l2_norm
+    );
 }

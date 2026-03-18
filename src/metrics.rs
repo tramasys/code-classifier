@@ -49,14 +49,25 @@ impl ClassificationMetrics {
     }
 
     pub fn confusion_matrix(&self) -> String {
-        let mut output =
-            String::from("            predicted\nactual         C    C++   Rust Python   Java\n");
+        let mut output = String::from(
+            "Confusion matrix\n\
+             ----------------\n\
+             Actual     |      C |    C++ |   Rust | Python |   Java |  Total | Accuracy\n\
+             -----------+--------+--------+--------+--------+--------+--------+---------\n",
+        );
         for actual in Language::ALL {
-            let _ = write!(output, "{:<10}", actual.name());
-            for count in self.confusion[actual as usize] {
-                let _ = write!(output, " {count:6}");
+            let row = &self.confusion[actual as usize];
+            let total: usize = row.iter().sum();
+            let accuracy = if total == 0 {
+                0.0
+            } else {
+                row[actual as usize] as f32 / total as f32 * 100.0
+            };
+            let _ = write!(output, "{:<10} |", actual.name());
+            for count in row {
+                let _ = write!(output, " {count:6} |");
             }
-            output.push('\n');
+            let _ = writeln!(output, " {total:6} | {accuracy:7.2}%");
         }
         output
     }
